@@ -1,0 +1,26 @@
+{
+    "id": "18DA1E16",
+    "path": "D:/repos/explainCode/code_parser.R",
+    "project_path": "code_parser.R",
+    "type": "r_source",
+    "hash": "1798172167",
+    "contents": "",
+    "dirty": false,
+    "created": 1625605182125.0,
+    "source_on_save": false,
+    "relative_order": 6,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "8,0",
+        "scrollLine": "0"
+    },
+    "folds": "24|30|46|0|\n68|42|96|2|\n",
+    "lastKnownWriteTime": 1589925916,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1625701479365,
+    "read_only": false,
+    "read_only_alternatives": []
+}

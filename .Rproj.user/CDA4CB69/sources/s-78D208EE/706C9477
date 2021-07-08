@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1589925572021.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "14|90|32|0|\n",
+    "hash" : "278108630",
+    "id" : "706C9477",
+    "lastKnownWriteTime" : 1544655530,
+    "last_content_update" : 1591378393845,
+    "path" : "D:/school/dokt/thesis/code/mcl_prl.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "25,6",
+        "scrollLine" : "9"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 8,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

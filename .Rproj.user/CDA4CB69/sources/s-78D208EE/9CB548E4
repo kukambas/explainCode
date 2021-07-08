@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1586645392914.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "24|30|46|0|\n63|34|203|0|\n68|42|96|2|\n97|37|106|2|\n108|54|124|2|\n125|30|149|2|\n152|54|191|2|\n220|23|247|0|\n",
+    "hash" : "0",
+    "id" : "9CB548E4",
+    "lastKnownWriteTime" : 1589925916,
+    "last_content_update" : 1589925936806,
+    "path" : "D:/repos/explainCode/code_parser.R",
+    "project_path" : "code_parser.R",
+    "properties" : {
+        "cursorPosition" : "274,148",
+        "scrollLine" : "0"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

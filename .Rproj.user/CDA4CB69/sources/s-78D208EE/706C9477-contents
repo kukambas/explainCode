@@ -1,0 +1,34 @@
+#' Wrapper for parallel Markov Clustering Algorithm.
+#'
+#' @description The mcl function provides an implementation of van Dongen MCL algorithm.
+#' @param adj_lst A list of adjacency matrices.
+#' @param inf An inflation parameter of MCL algorithm.
+#' @param iter A maximal number of iterations.
+#' @param eps A minimal probability value beyond which probability will be consdered as zero.
+#' @param addLoops A TRUE/FALSE value if artificial loop over every node should be added.
+#' @param threads A number of cores that should be used.
+#' @return A list of 'membership' vectors.
+#' @examples
+#' library(igraph)
+#' library(parallel)
+
+mcl_prl <- function(x, inf = 2, iter = 100, eps = 10^(-8), addLoops = TRUE, threads = 3) {
+
+  #- preparing list of list of arguments for parallel computations
+  params_lst <- lapply(x, function(y) {
+    list(y, inf, iter, eps, addLoops)
+  })
+
+  #- preparing clusters for computations
+  cl <- makeCluster(getOption("cl.cores", threads), methods = FALSE)
+  clusterExport(cl, varlist = "mcl")
+  mcl_lst <- parLapply(cl, params_lst, function(params_vec) {
+    mcl(x = params_vec[[1]], inf = params_vec[[2]],
+        iter = params_vec[[3]], eps = params_vec[[4]], addLoops = params_vec[[5]])
+  })
+  stopCluster(cl)
+
+  #-- return
+  return(mcl_lst)
+}
+

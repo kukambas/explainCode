@@ -1,0 +1,60 @@
+remove(list = ls())
+gc()
+
+#-- assumptions
+# 1. functions are unique
+
+
+source("code_parser.R")
+x = c("D:/school/dokt/thesis/code/")
+
+explain(x)
+print(explain_env)
+
+library('visNetwork')
+G <- ec_graph(x = unlist(explain_env))
+visNetwork::visIgraph(G) %>% visNetwork::visLayout(hierarchical = T) %>% visNetwork::visHierarchicalLayout(sortMethod = 'directed')
+
+
+ec__mcl
+
+
+#TODO:
+#-- funkcja, ktora sprawdza czy w znalezionych funkcjach jest def innej funkcji
+
+scripts_lst <- scripts_loader(x = c("D:/school/dokt/thesis/code/functions.R","D:/school/dokt/thesis/code/simulations.R"))
+ec_funcs_extractor(x = scripts_lst)
+# cleaning 
+rm(list = ls())
+gc()
+# sourcing
+print(explain_env)
+
+funcs_occurence <- funcs_startpoints(x = scripts_lst, funcs_nams = unique(unlist(sapply(funcs_lst,'names'))))
+funcs_def_occurence <- lapply(funcs_lst,function(x){lapply(x, function(y){as.numeric(y$function_range[1])})})
+
+funcs_dependencies_lst <- funcs_linker(funcs_occurences = funcs_def_occurence, funcs_info = funcs_lst)
+
+
+
+x = scripts_lst
+get_funcs_dependencies <- function(x){
+  funcs_lst <- funcs_extractor(x)
+  funcs_occurence <- funcs_startpoints(x = scripts_lst, funcs_nams = unique(unlist(sapply(funcs_lst,'names'))))
+  funcs_def_occurence <- lapply(funcs_lst,function(x){lapply(x, function(y){as.numeric(y$function_range[1])})})
+}
+
+code_graph <- function(x){
+  
+}
+
+i = 3
+
+
+library('igraph')
+library('visNetwork')
+G <- graph_from_edgelist(as.matrix(funcs_link_mat[,-3]))
+G_sim <- simplify(G, remove.loops = T)
+visIgraph(G_sim) %>% visLayout(hierarchical = T) %>% visHierarchicalLayout(sortMethod = 'directed')
+
+

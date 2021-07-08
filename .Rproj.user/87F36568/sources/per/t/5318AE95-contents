@@ -1,0 +1,19 @@
+# Classes definitions
+#'  A S4 class to represent EC function objects.
+#'  @slot args A list of input arguments defined in a function.
+#'  @slot body A character vector with function body line-by-line.
+#'  @slot source A character
+#'  @slot range A numeric
+#'  @slot parents A character giving names
+#'  @slot children A character
+#'  @export
+#'  @author Michal Wojtasiewicz
+
+setClass("EcFunction",
+         slots = list(args = 'list', body = 'character', source = 'character',
+                      range = 'numeric', evals = 'list',
+                      parents = "character", children = "character"))
+
+# ec_function class environment class
+setClass("EcEnv", slots = list(ec_names = 'list'))
+

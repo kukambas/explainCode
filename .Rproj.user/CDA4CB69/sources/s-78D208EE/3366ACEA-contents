@@ -1,0 +1,1004 @@
+##################################################################################
+################################ FUNCTIONS #######################################
+##################################################################################
+
+#- f
+neigh <- function(G.work,r){
+  k <- 0
+  labels <- numeric(length(V(G.work)))
+  v.neigh.start <- list()
+  repeat{
+    k <- k + 1
+    # providing spanning tree
+    G.tree <- as.undirected(minimum.spanning.tree(G.work, mode = 'collapse'))   
+    
+    # finding vertex with respect to heuristic rule
+    v <- which(degree(G.tree) == min(degree(G.tree)))
+    v1 <- which(V(G.work)$name == names(which.max(degree(G.work)[v])))
+    
+    # finding neighbourhood of rank "r"
+    ver <- as.numeric(V(make_ego_graph(G.work, r, nodes = v1, mode="all")[[1]])$name) 
+    
+    # loading names of vertices
+    nam <- as.numeric(V(G.work)$name)
+    
+    # conversion from names into indices
+    ind <- which(nam %in% ver)
+    v.neigh.start[[k]] <- nam[v1]
+    # removing chosen neighbourhood
+    G.temp <- delete.vertices(G.work, ind)
+    
+    # finding vertices which became isolated after cutting-out neighbourhood
+    ver.isolated <- as.numeric(names(which(degree(G.temp) == 0)))
+    ind.isolated <- which(nam %in% ver.isolated)
+    
+    # assigning clusters
+    labels[nam[c(ind,ind.isolated)]] <- k
+    
+    if(length(which(labels == 0)) == 0){break}
+    
+    G.work <- delete.vertices(G.work, c(ind,ind.isolated)) 
+    
+  }
+  v.neigh.start <- unlist(v.neigh.start)
+  return(list(labels,v.neigh.start))
+}
+mcl <- function(M, inf, iter, eps = -8){ 
+  #Inflation
+  library("igraph")
+  library("Matrix")
+  library("moments")
+  infla <- function(M,inf){
+    M <- M^(inf);
+    return (M);
+  }
+  # Normalization
+  norm <- function(M){
+    M <- M/apply(M,1,sum)
+    return (M)
+  }
+  c <- 1
+  
+  kol <- rep(1,dim(M)[1])
+  for(i in 1:iter){
+    old.M <- M
+    M.norm <- norm(M)
+    
+    M <- M.norm%*%M.norm
+    M <- infla(M, inf)
+    
+    M <- norm(M)
+    for(k in 1:nrow(M)){
+      if(length(which(M[k,]<10^eps)) != 0)
+        M[k,which(M[k,]<10^eps)] <- 0
+    }
+    
+    if (sum(old.M == M) == dim(M)[1]*dim(M)[2]) {
+      #nadaj kolor skupieniom/wierzcholkom
+      for(j in 1:dim(M)[1]){
+        if(sum(M[,j]>0)>0){
+          kol[which(M[,j]!=0)] <- c
+          c <- c + 1
+        }  
+      }
+      break
+    }
+  }
+  W <- list(adj=M,clust=kol)
+  return(W)
+}
+parallelMCL <- function(G.work,labels,inf = 2,iter = 100, eps, threads){
+  addLoop <- function(M){
+    diag(M) <- 1
+    return (M)
+  }
+  fin.labs <- numeric(length(V(G.work)))
+  uni <- unique(labels)
+  G.list <- mapply(function(i, G.work, labels, uni){
+    G <- induced.subgraph(G.work,which(labels == uni[i]))
+    G <- addLoop(get.adjacency(G))
+  },i = 1:length(uni), MoreArgs = list(G.work, labels, uni), SIMPLIFY = FALSE)
+  
+  cl <- makeCluster(mc <- getOption("cl.cores", threads), methods = FALSE)
+    res <- clusterMap(cl,mcl,G.list, inf, iter, eps,.scheduling = 'dynamic')
+  stopCluster(cl)
+
+  for(i in 1:length(uni))
+    fin.labs[as.numeric(colnames(res[[i]]$adj))] <- res[[i]]$clust + max(fin.labs) 
+
+  return(fin.labs)
+}
+aggregate <- function(G.work,labels){
+  uni <- sort(unique(labels))
+  res <- mapply(function(i,G.work,uni,labels){
+    neigh <- neighborhood(G.work,1,which(labels == uni[i]))
+    neigh1 <- unlist(neigh)
+    M <- matrix(0,length(labels[neigh1]),2)
+    M[,1] <- rep(uni[i],length(labels[neigh1]))
+    M[,2] <- labels[neigh1]
+    M <- M[which(M[,1] != M[,2]),]
+    return(M)
+  },i = 1:length(uni), MoreArgs = list(G.work,uni,labels), SIMPLIFY = FALSE)
+  res <- do.call("rbind", res)
+  res <- graph.edgelist(res,directed = F)
+  V(res)$name <- 1:length(V(res))
+  res
+}
+# glowny program
+paralarw <- function(G.work,inf,r,iter,eps,threads){
+  n <- length(V(G.work))
+  labs.lst <- list()
+  j <- 1 
+  M <- matrix(1:(2*n),n,2)
+  repeat{
+    j <- j + 1
+    print(j)
+    a <- Sys.time()
+    labels <- neigh(G.work,r)
+    b <- Sys.time()
+    print(b-a)
+    a <- Sys.time()
+    fin.labs <- parallelMCL(G.work,labels[[1]],inf,iter,eps,threads)
+    b <- Sys.time()
+    print(b-a)
+    a <- Sys.time()
+    G.work.new <- aggregate(G.work, fin.labs)
+    b <- Sys.time()
+    print(b-a)
+    if(j == 2){
+      M[,j] <- fin.labs  
+    }else{
+      for(i in 1:length(fin.labs)){
+        M[which(M[,(j-1)] == i),j] = fin.labs[i]
+      }
+    }
+    
+    if(sum(degree(G.work.new)) == 0){
+      break
+    }else{
+      M <- cbind(M,numeric(n))
+      G.work <- G.work.new
+    }
+  }
+  return(M)
+}
+
+
+#-- RUN
+G.tmp <- util.graphProcessing(graph_igh = G.Zachary, keep_directed_val = TRUE)
+
+system.time({
+  M1 <- paralarw(G.work = G.Zachary, inf = 2, r = 1, iter = 400, eps = -8, threads = 1)
+})
+
+modularity(G.Zachary,as.numeric(M1[,2]))
+
+
+
+
+lapply(1:ncol(M), function(i){
+  print(i)
+  print(modularity(G.Polblog,M[,i]))
+})
+plot(G.Zachary, vertex.color = M[,2])
+#mosty
+bridgeFind <- function(G,com){
+  #funkcja szuka w wyznaczonym podziale podgrafow rzadkich, ktory sasiaduja z podgrafami gestymi. 
+  uni = unique(com)
+  res = matrix(c(0,0),2,1)
+  for(i in uni){
+    nr <- which(com == i)
+    G.sub <- induced.subgraph(G,nr)
+    if(sum(degree(G,nr))-sum(degree(G.sub)) >= sum(degree(G.sub))){
+      uni1 <- unique(com[setdiff(unlist(neighborhood(G,order = 1, nodes = nr,mode = 'all')),nr)])
+      if(length(uni1) > 1){
+        denseNeigh <- 0
+        for(j in uni1){
+          nr1 <- which(com == j)
+          G.sub1 <- induced.subgraph(G,nr1)
+          denseNeigh <- denseNeigh + ifelse(sum(degree(G,nr1))-sum(degree(G.sub1)) <= sum(degree(G.sub1)),1,0)
+        }
+        if(denseNeigh  > 1)
+          res = cbind(res,rbind(rep(i,length(nr)),nr))
+      }
+    }
+    
+  }
+  return(res[,-1])  
+}
+# Parallelized running of bridgeCoeff
+bridgeCoeffParallel <- function(uni.bridge, G, com, v.bridge, v.bridge.new, uni.bridge1){
+  library("igraph")
+  res <- mapply(function(uni, G, com, v.bridge, v.bridge.new, uni.bridge1){
+    ## reserving space for results
+    bridge.stat <- numeric(4)
+    bridge.stat[1] <- uni
+    print(uni)
+    # wierzcholki tworzace most
+    uni.bridge.v <- v.bridge.new[2,which(v.bridge.new[1,] == uni)]
+    # sasiedztwo mostu
+    uni.bridge.neigh <- unlist(neighborhood(G,1,uni.bridge.v))
+    # sasiadujace z mostem skupienia
+    bridge.neigh.clust <- unique(com[uni.bridge.neigh])
+    # biore tylko geste sasiedztwo
+    if(length(which(uni == uni.bridge1))>0){
+      bridge.neigh.clust.dense <- c(setdiff(bridge.neigh.clust,uni.bridge1),uni)
+    }else{
+      bridge.neigh.clust.dense <- setdiff(bridge.neigh.clust,uni.bridge1)
+    }
+    # wierzcholki z mostu i wybranego gestego sasiedztwa
+    bridge.neigh.v <- which(!is.na(match(com,bridge.neigh.clust.dense)))
+    G.temp <- induced.subgraph(G,bridge.neigh.v)
+    
+    e.all <- length(E(G.temp))
+    e.clust <- 0
+    v.clust.all <- 0
+    
+    for(i in bridge.neigh.clust.dense){
+      G.temp1 <- induced.subgraph(G,which(com == i))
+      v.deg <- sum(degree(G,which(com == i)))/2
+      e.in.clust <- length(E(G.temp1))
+      v.clust <- length(V(G.temp1))
+      e.clust <- e.clust + e.in.clust
+      if(i == uni){
+        e.out.bridge <- sum(degree(G.temp,which(!is.na(match(V(G.temp)$id,V(G)[uni.bridge.v]$id))))) - 2*e.in.clust
+        v.iso <- sum(degree(G.temp1)==degree(G,uni.bridge.v))
+        bridge.stat[4] <-  (v.clust-v.iso)/v.clust
+      }else{
+        v.clust.all <- v.clust.all + (e.in.clust/v.deg)
+      }
+    }
+    bridge.stat[2] <- (e.out.bridge/(e.all - e.clust))
+    bridge.stat[3] <- v.clust.all/(length(bridge.neigh.clust.dense)-1)
+    
+    return(bridge.stat)
+  }, uni = uni.bridge,
+  MoreArgs = list(G = G, com = com, v.bridge = v.bridge,
+                  v.bridge.new = v.bridge.new, uni.bridge1 = uni.bridge1), SIMPLIFY = FALSE)  
+  res1 <- do.call("rbind",res)
+  return(res1) 
+}
+# Statystyki dla mostow
+bridgeCoeff <- function(G,com,v.bridge,v.bridge.new, threads){
+  # znajduje numery skupien-mostow
+  uni.bridge <- unique(v.bridge.new[1,])
+  uni.bridge1 <- unique(v.bridge[1,])
+  
+  part <- ceiling(length(uni.bridge)/threads)
+  data.lst <- list()
+  for(i in 1:threads)
+    data.lst[[i]] <- uni.bridge[((((i-1)*part)+1):(part*i))]
+  
+  data.lst[[threads]] <- uni.bridge[((((i-1)*part)+1):length(uni.bridge))]
+  
+  cl <- makeCluster(mc <- getOption("cl.cores", threads), methods = FALSE)
+  res <- clusterMap(cl,bridgeCoeffParallel, data.lst,
+                    MoreArgs = list(G, com, v.bridge, v.bridge.new, uni.bridge1), .scheduling = 'dynamic')
+  stopCluster(cl)
+  res1 <- do.call("rbind",res)
+  return(res1)
+}
+
+load("Occurence.res.larw")
+load("Occurence.bridge.larw")
+G <- G.Occurence
+com <- Occurence.res.larw[,3]
+modularity(G,com)  
+v.bridge.new <- matrix(0,2,length(com))
+v.bridge.new[1,] <- com
+v.bridge.new[2,] <- 1:length(com)
+v.bridge <- Occurence.bridge.larw
+threads = 3
+
+
+Occurence.bridges.all <- bridgeCoeff(G,com,v.bridge,v.bridge.new,3)
+Occurence.bridges.all1 <- na.omit(Occurence.bridges.all)
+Occurence.coeff.all <- infoS(Occurence.bridges.all1)
+save(Occurence.bridges.all, file = "Occurence.bridges.all")
+
+
+Occurence.bridges.all1
+
+
+# Statystyki dla aktualizacji mostow
+# bridgeCoeff1(G,res.temp, bridge.temp, bridges.agr.temp)
+# Aktualizacja wartosci wspolczynnika
+bridgeCoeffSingle <- function(G,com,v.bridge, bridge.new){
+  uni.bridge <- bridge.new[1,1]
+  uni.bridge1 <- unique(v.bridge[1,])
+  bridge.stat <- matrix(0,1,4)
+  bridge.stat[1,1] <- uni.bridge
+  
+  # wierzcholki tworzace most
+  uni.bridge.v <- bridge.new[2,]
+  # sasiedztwo mostu
+  uni.bridge.neigh <- unique(unlist(neighborhood(G,1,uni.bridge.v)))
+  # sasiadujace z mostem skupienia
+  bridge.neigh.clust <- com[uni.bridge.neigh]
+  # biore tylko geste sasiedztwo
+  bridge.neigh.clust.dense <- c(setdiff(bridge.neigh.clust, uni.bridge1),uni.bridge)
+  # wierzcholki z mostu i wybranego gestego sasiedztwa
+  bridge.neigh.v <- which(com %in% bridge.neigh.clust.dense)
+  G.temp <- induced.subgraph(G,bridge.neigh.v)
+  
+  e.all <- length(E(G.temp))
+  e.clust <- 0
+  v.clust.all <- 0
+  for(i in bridge.neigh.clust.dense){
+    # tworze podgraf dla danego skupienia
+    G.temp1 <- induced.subgraph(G, which(com == i))
+    v.deg <- sum(degree(G,which(com == i)))/2
+    e.in.clust <- length(E(G.temp1))
+    v.clust <- length(V(G.temp1))
+    e.clust <- e.clust + e.in.clust
+    if(i == uni.bridge){
+      e.out.bridge <- sum(degree(G.temp,which(!is.na(match(V(G.temp)$id,V(G)[uni.bridge.v]$id))))) - 2*e.in.clust
+      v.iso <- sum(degree(G.temp1) == degree(G,uni.bridge.v))
+      bridge.stat[1,4] <-  (v.clust-v.iso)/v.clust
+    }else{
+      v.clust.all <- v.clust.all + (e.in.clust/v.deg)
+    }
+  }
+  bridge.stat[1,2] <- (e.out.bridge/(e.all - e.clust))
+  bridge.stat[1,3] <- v.clust.all/(length(bridge.neigh.clust.dense)-1)
+  bridge.stat
+}
+#gestosc podgrafow
+denClust <-function(G,com){
+  uni = unique(com)
+  deg = max(degree(G))
+  e = numeric(length(uni))
+  e.full = numeric(length(uni))
+  for(i in uni){
+    G.sub = induced.subgraph(G,which(com == i))
+    v = length(V(G.sub))
+    e[i] = length(E(G.sub)) + 1
+    e.full[i] = v*(v-1)/2 + 1
+  }
+  e.full = e.full + sum(as.numeric(table(com))==1)
+  return(sum(e)/sum(e.full))
+}
+# symulacja jednorodnego lancucha Markowa
+markovChain <- function(G,n,eps){
+  G.adj = get.adjacency(G)
+  G.adj = as.matrix(norm(G.adj))
+  if(n != 0){
+    G.adj = G.adj%^%n
+  }else{
+    n = 1
+    G.adj.new = G.adj%^%n
+    repeat{
+      G.adj.old = G.adj.new
+      n = n + 1
+      G.adj.new = G.adj%^%n
+      if(abs(sum(G.adj.old - G.adj.new)) <= eps)
+        break
+    }
+  }
+  res = list(dist = G.adj,steps = n)
+  return(res)
+}
+# srednie rozproszenie
+signalDiffusionStats <- function(signal){
+  items.count <- length(signal)
+  res <- list()
+  res1 <- list()
+  len <- numeric(items.count)
+  m <- 0
+  for(i in 1:items.count){
+    part.signal <- signal[[i]]
+    stats <- data.frame(bridge = part.signal[,1], avg_signal_diff = apply(as.matrix(part.signal[,-1]),1,'mean'), sd_signal_diff = apply(as.matrix(part.signal[,-1]),1,'sd'))
+    res[[i]] <- stats
+    res1[[i]] <- c(stats[,1]-stats[,2])
+    len[i] <- nrow(part.signal)
+    m <- max(m,nrow(part.signal))
+  }
+  
+  diff.mat <- matrix(0,2,m)
+  for(i in 1:m){
+    diffs.steps <- which(len >= i)
+    s <- 0
+    k <- 0
+    std <- numeric(length(diffs.steps))
+    for(j in diffs.steps){
+      k <- k + 1
+      s <- s + res1[[j]][i]
+      std[k] <- res1[[j]][i]
+    }
+    diff.mat[1,i] <- s/length(diffs.steps)
+    diff.mat[2,i] <- sd(std)
+  }
+  res.all <- list(res,res1,diff.mat)
+  return(res.all)  
+}
+# wplyw wyciecia mostu
+signalDiffusionComparison <- function(signal, hard.signal){
+  len = length(signal)
+  if(len != length(hard.signal)){
+    print('Podane wyniki dyfuzji sygnalu sa roznej dlugosci.')
+  }else{
+    res = list()
+    lens = numeric(len)
+    m = 0
+    for(i in 1:len){
+      part.signal = signal[[i]][,-1]
+      part.hard.signal = hard.signal[[i]]
+      if(nrow(part.signal) < nrow(part.hard.signal)){
+        part.signal = rbind(part.signal,matrix(1,nrow(part.hard.signal)-nrow(part.signal),ncol(part.signal)))
+      }else if(nrow(part.signal) > nrow(part.hard.signal)){
+        part.hard.signal = rbind(part.hard.signal,matrix(1,nrow(part.signal)-nrow(part.hard.signal),ncol(part.signal)))
+      }
+      res[[i]] = data.frame(avg_diff_comp = apply(part.signal - part.hard.signal,1,'mean'), sd_diff_comp = apply(part.signal - part.hard.signal,1,'sd'))
+      m = max(m,nrow(part.signal))
+      lens[i] = nrow(part.signal)
+    }
+    diff.mat = numeric(m)
+    for(i in 1:m){
+      diffs.steps = which(lens >= i)
+      s = 0
+      for(j in diffs.steps){
+        s = s + res[[j]][i,1]
+      }
+      diff.mat[i] = s/length(diffs.steps)
+    }
+    res.all = list(res,diff.mat)
+  }
+  return(res.all) 
+}
+# rozproszenie sygnalu
+signalDiffusion <- function(G, com, bridges){
+  #   if(bridges[2,1] == 0)
+  #     bridges <- bridgeFind(G,com)
+  
+  print(paste('Found bridges: ',length(unique(bridges[1,]))))
+  if(sum(bridges) > 0){
+    uni.bridge.clust <- unique(bridges[1,])
+    res.list <- list() 
+    for(i in 1:length(uni.bridge.clust)){ 
+      print(paste('Bridge: ',i))
+      # wybieram jeden most
+      v.bridge <- which(com == uni.bridge.clust[i])
+      # znajduje wszystkie wierzcholki, ktore nie sa rozpatrywanym mostembedace mostami
+      v.bridges <- which(is.na(match(com,uni.bridge.clust)) == 0)
+      # znajduje przypisanie wierzcholków nie bedacych mostami, ale sasiadujacych z rozpatrywanym mostem
+      uni.neigh <- sort(unique(com[setdiff(unique(unlist(neighborhood(G,1,v.bridge))),v.bridges)]))
+      # znajduje graf indukowany przez mosty i sasiadujace z nim skupienia
+      G.sub <- induced.subgraph(G,c(which(!is.na(match(com,uni.neigh))),v.bridge))
+      G.sub.vertices = c(which(is.na(match(com,uni.neigh)) == 0),v.bridge)
+      G.sub.vertices.new = rbind(G.sub.vertices,sort(G.sub.vertices))
+      # przypisanie mostow w indukowanym grafie
+      v.bridge.new <- which(!is.na(match(V(G.sub)$name,v.bridge)))
+      v.new <- which(is.na(match(V(G.sub)$name,v.bridge)))
+      cat('Diameter calculating... ','\n')
+      d <- diameter(G.sub)
+      cat('Diameter is ',d,"\n")
+      res.mat = matrix(0,d,length(uni.neigh)+1)
+      for(j in 1:d){
+        print(paste('Random walker step: ',j))
+        # zlicze ile masy informacji juz sie przedostalo
+        visited <- mapply(function(v.bridge.part, G.sub, j){
+          neighborhood(G.sub,j,v.bridge.part)            
+        }, v.bridge.new, MoreArgs = list(G.sub,j))
+        
+        visited.cnt <- sum(mapply(function(neigh, v.bridge.new){
+          sum(is.na(match(neigh,v.bridge.new)))}, visited , MoreArgs = list(v.bridge.new)))
+        
+        res.mat[j,1] <- visited.cnt/(length(v.bridge.new)*(length(V(G.sub))-length(v.bridge.new)))
+        for(k in 1:length(uni.neigh)){
+          v.new <- which(!is.na(match(G.sub.vertices.new[2,],which(com == uni.neigh[k]))))
+          
+          visited <- neighborhood(G.sub,j,v.new)
+          visited.cnt <- sum(mapply(function(neigh, v.new){
+            sum(is.na(match(neigh,v.new)))}, visited , MoreArgs = list(v.new)))
+          
+          res.mat[j,1+k] = visited.cnt/(length(v.new)*(length(V(G.sub))-length(v.new)))
+        }
+      }
+      res.list[[i]] = res.mat  
+    }
+    return(res.list)
+  }else{
+    print('I cannot find any bridges with that clustering results!')
+  }
+}
+## symulacja sygnalu po wycieciu mostu
+hardSignalDiffusion <- function(G, com){
+  bridges = bridgeFind(G,com)
+  print(paste('Found bridges: ',length(unique(bridges[1,]))))
+  if(sum(bridges) > 0){
+    uni.bridge.clust = unique(bridges[1,])
+    res.list = list()
+    for(i in 1:length(uni.bridge.clust)){
+      print(paste('Bridge: ',i))
+      v.bridge = which(com == uni.bridge.clust[i])
+      v.bridges = which(is.na(match(com,uni.bridge.clust)) == 0)
+      
+      uni.neigh = sort(unique(com[setdiff(unique(unlist(neighborhood(G,1,v.bridge))),v.bridges)]))
+      
+      G.sub = induced.subgraph(G,which(is.na(match(com,uni.neigh)) == 0))
+      G.sub.vertices = which(is.na(match(com,uni.neigh)) == 0)
+      G.sub.vertices.cols = rbind(G.sub.vertices,sort(G.sub.vertices))
+      d = diameter(G.sub)
+      print(paste('Diameter of subgraph:', d))
+      res.mat = matrix(0,d,length(uni.neigh))
+      
+      for(j in 1:d){
+        print(paste('markov Chain step: ',j))
+        M.stoch = markovChain(G.sub, n = j, 0)
+        for(k in 1:length(uni.neigh)){
+          dense.clust.probs = M.stoch$dist[which(is.na(match(G.sub.vertices.cols[2,],which(com == uni.neigh[k]))) == 0),which(is.na(match(G.sub.vertices.cols[2,],which(com != uni.neigh[k]))) == 0)]
+          res.mat[j,k] = sum(dense.clust.probs>0)/(dim(dense.clust.probs)[1]*dim(dense.clust.probs)[2])
+        }
+      }
+      res.list[[i]] = res.mat  
+    }
+    return(res.list)
+  }else{
+    print('I cannot find any bridges with that clustering results!')
+  }
+}
+signalDiffusionNeigh <- function(G, com){
+  bridges = bridgeFind(G,com)
+  print(paste('Found bridges: ',length(unique(bridges[1,]))))
+  if(sum(bridges) > 0){
+    # liczba roznych mostow
+    uni.bridge.clust = unique(bridges[1,])
+    
+    res.list = list()
+    for(i in 1:length(uni.bridge.clust)){
+      print(paste('Bridge: ',i))
+      # wierzcholki z kolejnego mostu
+      v.bridge = which(com == uni.bridge.clust[i])
+      
+      # sasiadujace skupienia
+      uni.neigh = sort(unique(com[setdiff(unique(unlist(neighborhood(G,1,v.bridge))),v.bridge)]))
+      
+      # podgraf z mostem i sasiadami
+      G.sub = induced.subgraph(G,c(which(is.na(match(com,uni.neigh)) == 0),v.bridge))
+      # podgraf z mostem i sasiadmi - wierzcholki
+      G.sub.vertices = c(which(is.na(match(com,uni.neigh)) == 0),v.bridge)
+      G.sub.vertices.cols = rbind(G.sub.vertices,sort(G.sub.vertices))
+      
+      # srednica podgrafu
+      d = diameter(G.sub)
+      print(paste('Diameter of subgraph:', d))
+      res.mat = matrix(0,d,length(uni.neigh)+1)
+      # numery wierzcholkow z mostu w podgrafie
+      v.bridge.sub = which(is.na(match(G.sub.vertices.cols[2,],v.bridge)) == 0)
+      G.sub.bridge = induced.subgraph(G.sub,v.bridge.sub)
+      all = (length(V(G.sub))-length(v.bridge.sub))*length(v.bridge.sub)
+      for(j in 1:d){
+        # sasiedztwo bez mostow
+        visited = sum(is.na(match(unlist(neighborhood(G.sub,j,v.bridge.sub)),v.bridge.sub)))
+        res.mat[j,1] = visited / all
+        for(k in 1:length(uni.neigh)){
+          v.clust = which(is.na(match(G.sub.vertices.cols[2,],which(com == uni.neigh[k]))) == 0)
+          all.dense = (length(V(G.sub))-length(v.clust))*length(v.clust)
+          visited = sum(is.na(match(unlist(neighborhood(G.sub,j,v.clust)),v.clust)))
+          res.mat[j,1+k] =  visited / all.dense
+        }
+      }
+      res.list[[i]] = res.mat  
+    }
+    return(res.list)
+  }else{
+    print('I cannot find any bridges with that clustering results!')
+  }
+}
+## znajduje mosty do agregacji
+bridgeToAggregation <- function(G,com, bridge, coeff){
+  true.bridges <- bridge
+  G.temp <- induced.subgraph(G, true.bridges[2,])
+  bridge.temp <- Matrix(0,3,ncol(true.bridges))
+  bridge.temp[1:2,] <- Matrix(true.bridges)
+  bridge.temp[3,] <- match(true.bridges[2,], V(G.temp)$name)
+  
+  uni <- unique(bridge.temp[1,])
+  uni.len <- length(uni)
+  bridges.iso <- numeric(uni.len)
+  
+  for(i in 1:uni.len){
+    bridge.size <- length(bridge.temp[3,which(bridge.temp[1,] == uni[i])])
+    neigh <- bridge.temp[,unique(unlist(
+      neighborhood(G.temp,1,bridge.temp[3,which(bridge.temp[1,] == uni[i])])))]
+    
+    if(ncol(neigh) == bridge.size)
+      bridges.iso[i] <- uni[i]
+  }
+  if(length(which(bridges.iso != 0)) > 0){
+    bridges.iso.ind <- which(bridge.temp[1,] %in% bridges.iso[which(bridges.iso != 0)])
+    bridges.agr <- bridge.temp[,-bridges.iso.ind ]
+    return(bridges.agr[-3,])
+  }else{
+    return(bridge.temp[-3,])
+  }
+}
+## InfoSpread
+infoS <- function(coeff){
+  3*apply(coeff[,-1],1,'prod')/apply(coeff[,-1],1,'sum')
+}
+# Bridge aggregation
+bridgeAggregate <-function(G,res, bridges, bridges.agr, coeff.agr){
+  visited <- 0
+  G.infoSpread <- infoS(coeff.agr)
+  while(sum(visited != 0) < nrow(coeff.agr)){
+    ### zapisanie juz odwiedzonych mostow
+    #print(visited)
+    max.spread <- numeric(2)
+    if(sum(visited) != 0){
+      visited.ind <- which(coeff.agr[,1] %in% visited[which(visited != 0)])
+      if(length(coeff.agr[-visited.ind,]) == 4){
+        bridge.low <- coeff.agr[-visited.ind,]
+      }else{
+        min.infos <- which.min(G.infoSpread[-visited.ind])
+        bridge.low <- coeff.agr[-visited.ind,][min.infos,]  
+      }
+      
+    }else{
+      bridge.low <- coeff.agr[which.min(G.infoSpread),]
+    }
+    visited <- c(visited,bridge.low[1])
+    
+    #####################################
+    
+    cat("Number of visited bridges candidates: ", length(visited)-1," from ", nrow(coeff.agr),"\n")
+    
+    ### znajde sasiadujace mosty lub kandydatow na mosty do agregacji
+    G.list <- graph.neighborhood(G,1,bridges.agr[2,which(bridges.agr[1,] %in% bridge.low[1])])
+    G.list.v <- unique(unlist(lapply(G.list, function(x){
+      as.numeric(V(x)$name)
+    })))
+    #####################################
+    # znajde sasiadujace mosty do potencjalnej agregacji
+    bridges.agr.neigh <- bridges.agr[,which(bridges.agr[1,] %in% unique(bridges.agr[1,which(bridges.agr[2,] %in% G.list.v)]))]
+    bridges.agr.neigh <- bridges.agr.neigh[,-which(bridges.agr.neigh[1,] == bridge.low[1])]
+    # unikalne mosty z sasiedztwa
+    uni.b.agr.neigh <- unique(bridges.agr.neigh[1,])
+    b.agr.neigh.len <- length(uni.b.agr.neigh)
+    
+    for(i in 1:b.agr.neigh.len){
+      cat("Number of visited bridge neighs: ", i," from ", b.agr.neigh.len,"\n")
+      # podmieniam tymczasowo przypisanie mostow tak aby je zagregowac
+      res.temp <- res
+      res.temp[which(res == uni.b.agr.neigh[i])] <- bridge.low[1]
+      bridge.temp <- bridges.agr
+      bridge.temp[1,which(bridges.agr[1,] == uni.b.agr.neigh[i])] <- bridge.low[1]
+      ############################
+      # sprawdze czy zagregowany most jest caly czas rzadki
+      G.temp <- induced.subgraph(G,which(res.temp == bridge.low[1]))
+      # jesli jest to sprawdza czy zwieksza wartosc infospread i agreguje
+      if((sum(degree(G,which(res.temp == bridge.low[1])))- sum(degree(G.temp))) >= sum(degree(G.temp))){
+        # wierzcholki mostu do aktualizacji
+        bridge.temp.new <- bridge.temp[,which(bridge.temp[1,] == bridge.low[1])]
+        # przeliczam statystyki tylko dla tej jednej agregacji
+        system.time({
+          coeff.temp <- bridgeCoeffSingle(G,res.temp, bridge.temp, bridge.temp.new)
+        })
+        coeff.temp.val <- 3*prod(coeff.temp[1,-1])/sum(coeff.temp[1,-1])
+        # sprawdzam czy wartosc infospread sie poprawia
+        if(coeff.temp.val  > infoS(coeff.agr)[which(coeff.agr[,1] == bridge.low[1])]){
+          if(coeff.temp.val   > max.spread[2]){
+            max.spread[1] <- uni.b.agr.neigh[i]
+            max.spread[2] <- coeff.temp.val 
+          }
+        }
+      }
+    }
+    if(max.spread[1] != 0){
+      visited <- c(visited,max.spread[1])
+      res[which(res == max.spread[1])] <- bridge.low[1]
+      bridges.agr[1,which(bridges.agr[1,] == max.spread[1])] <- bridge.low[1]
+    }
+  }
+  return(list(res, bridges.agr, visited))
+}
+bridgeAggregation.minmax <- function(G,res,bridges,bridges.agr){
+  k <- 0
+  res.lst <- list()
+  change.flag <- 1
+  while(change.flag != 0){
+    gc()
+    k <- k + 1
+    cat("Aggregation number ",k,"\n")
+    change.flag <- 0
+    visited <- 0
+    coeff.agr <- bridgeCoeff(G,res,bridges.agr,bridges.agr)
+    G.infoSpread <- infoS(coeff.agr)
+    while(sum(visited != 0) < nrow(coeff.agr)){
+      # choice of bridge with lowest value of InfoSpread
+      if(sum(visited) != 0){
+        visited.ind <- which(coeff.agr[,1] %in% visited[which(visited != 0)])
+        if(length(coeff.agr[-visited.ind,]) == 4){
+          bridge.low <- coeff.agr[-visited.ind,]
+        }else{
+          min.infos <- which.min(G.infoSpread[-visited.ind])
+          bridge.low <- coeff.agr[-visited.ind,][min.infos,]  
+        }
+        
+      }else{
+        bridge.low <- coeff.agr[which.min(G.infoSpread),]
+      }
+      # adding chosen bridge to set of visted ones
+      visited <- c(visited,bridge.low[1])
+      cat("Number of visited bridge candidates: ", length(visited)-1," from ", nrow(coeff.agr),"\n")
+      # finding neighbourhoods of bridge
+      G.list <- graph.neighborhood(G,1,bridges.agr[2,which(bridges.agr[1,] %in% bridge.low[1])])
+      G.list.v <- unique(unlist(lapply(G.list, function(x){
+        as.numeric(V(x)$name)
+      })))
+      # znajde sasiadujace mosty do potencjalnej agregacji
+      bridges.agr.neigh <- bridges.agr[,which(bridges.agr[1,] %in% unique(bridges.agr[1,which(bridges.agr[2,] %in% G.list.v)]))]
+      bridges.agr.neigh <- bridges.agr.neigh[,-which(bridges.agr.neigh[1,] == bridge.low[1])]
+      # unikalne mosty z sasiedztwa
+      uni.b.agr.neigh <- unique(bridges.agr.neigh[1,])
+      b.agr.neigh.len <- length(uni.b.agr.neigh)
+      flag <- 0
+      # aggregation of first bridge from neighbourhood which will increase value of InfoSpread
+      while(flag == 0 & length(uni.b.agr.neigh) > 0){
+        min.neigh.bridge <- uni.b.agr.neigh[which.max(G.infoSpread[which(coeff.agr %in% uni.b.agr.neigh)])]
+        
+        res.temp <- res
+        res.temp[which(res == min.neigh.bridge)] <- bridge.low[1]
+        bridge.temp <- bridges.agr
+        bridge.temp[1,which(bridges.agr[1,] == min.neigh.bridge)] <- bridge.low[1]
+        
+        ############################
+        # sprawdze czy zagregowany most jest caly czas rzadki
+        G.temp <- induced.subgraph(G,which(res.temp == bridge.low[1]))
+        
+        if((sum(degree(G,which(res.temp == bridge.low[1])))- sum(degree(G.temp))) >= sum(degree(G.temp))){
+          # wierzcholki mostu do aktualizacji
+          bridge.temp.new <- bridge.temp[,which(bridge.temp[1,] == bridge.low[1])]
+          # przeliczam statystyki tylko dla tej jednej agregacji
+          coeff.temp <- bridgeCoeffSingle(G,res.temp, bridge.temp, bridge.temp.new)
+          coeff.temp.val <- 3*prod(coeff.temp[1,-1])/sum(coeff.temp[1,-1])
+          # sprawdzam czy wartosc infospread sie poprawia
+          if(coeff.temp.val  > infoS(coeff.agr)[which(coeff.agr[,1] == bridge.low[1])]){
+            res[which(res == min.neigh.bridge )] <- bridge.low[1]
+            bridges.agr[1,which(bridges.agr[1,] == min.neigh.bridge )] <- bridge.low[1]
+            flag <- 1
+            change.flag <- 1
+          }
+        }
+        uni.b.agr.neigh <- uni.b.agr.neigh[-which(uni.b.agr.neigh == min.neigh.bridge)]
+      }
+    }
+    res.lst[[k]] <- list(res,bridges.agr)
+  }
+  return(res.lst)
+}
+bridgeAggregation.maxmin <- function(G,res,bridges,bridges.agr){
+  k <- 0
+  res.lst <- list()
+  change.flag <- 1
+  while(change.flag != 0){
+    gc()
+    k <- k + 1
+    cat("Aggregation number ",k,"\n")
+    change.flag <- 0
+    visited <- 0
+    coeff.agr <- bridgeCoeff(G,res,bridges.agr,bridges.agr)
+    G.infoSpread <- infoS(coeff.agr)
+    while(sum(visited != 0) < nrow(coeff.agr)){
+      # choice of bridge with lowest value of InfoSpread
+      if(sum(visited) != 0){
+        visited.ind <- which(coeff.agr[,1] %in% visited[which(visited != 0)])
+        if(length(coeff.agr[-visited.ind,]) == 4){
+          bridge.low <- coeff.agr[-visited.ind,]
+        }else{
+          min.infos <- which.max(G.infoSpread[-visited.ind])
+          bridge.low <- coeff.agr[-visited.ind,][min.infos,]  
+        }
+        
+      }else{
+        bridge.low <- coeff.agr[which.max(G.infoSpread),]
+      }
+      # adding chosen bridge to set of visted ones
+      visited <- c(visited,bridge.low[1])
+      cat("Number of visited bridge candidates: ", length(visited)-1," from ", nrow(coeff.agr),"\n")
+      # finding neighbourhoods of bridge
+      G.list <- graph.neighborhood(G,1,bridges.agr[2,which(bridges.agr[1,] %in% bridge.low[1])])
+      G.list.v <- unique(unlist(lapply(G.list, function(x){
+        as.numeric(V(x)$name)
+      })))
+      # znajde sasiadujace mosty do potencjalnej agregacji
+      bridges.agr.neigh <- bridges.agr[,which(bridges.agr[1,] %in% unique(bridges.agr[1,which(bridges.agr[2,] %in% G.list.v)]))]
+      bridges.agr.neigh <- bridges.agr.neigh[,-which(bridges.agr.neigh[1,] == bridge.low[1])]
+      # unikalne mosty z sasiedztwa
+      uni.b.agr.neigh <- unique(bridges.agr.neigh[1,])
+      b.agr.neigh.len <- length(uni.b.agr.neigh)
+      flag <- 0
+      # aggregation of first bridge from neighbourhood which will increase value of InfoSpread
+      while(flag == 0 & length(uni.b.agr.neigh) > 0){
+        min.neigh.bridge <- uni.b.agr.neigh[which.min(G.infoSpread[which(coeff.agr %in% uni.b.agr.neigh)])]
+        
+        res.temp <- res
+        res.temp[which(res == min.neigh.bridge)] <- bridge.low[1]
+        bridge.temp <- bridges.agr
+        bridge.temp[1,which(bridges.agr[1,] == min.neigh.bridge)] <- bridge.low[1]
+        
+        ############################
+        # sprawdze czy zagregowany most jest caly czas rzadki
+        G.temp <- induced.subgraph(G,which(res.temp == bridge.low[1]))
+        
+        if((sum(degree(G,which(res.temp == bridge.low[1])))- sum(degree(G.temp))) >= sum(degree(G.temp))){
+          # wierzcholki mostu do aktualizacji
+          bridge.temp.new <- bridge.temp[,which(bridge.temp[1,] == bridge.low[1])]
+          # przeliczam statystyki tylko dla tej jednej agregacji
+          coeff.temp <- bridgeCoeffSingle(G,res.temp, bridge.temp, bridge.temp.new)
+          coeff.temp.val <- 3*prod(coeff.temp[1,-1])/sum(coeff.temp[1,-1])
+          # sprawdzam czy wartosc infospread sie poprawia
+          if(coeff.temp.val  > infoS(coeff.agr)[which(coeff.agr[,1] == bridge.low[1])]){
+            res[which(res == min.neigh.bridge )] <- bridge.low[1]
+            bridges.agr[1,which(bridges.agr[1,] == min.neigh.bridge )] <- bridge.low[1]
+            flag <- 1
+            change.flag <- 1
+          }
+        }
+        uni.b.agr.neigh <- uni.b.agr.neigh[-which(uni.b.agr.neigh == min.neigh.bridge)]
+      }
+    }
+    res.lst[[k]] <- list(res,bridges.agr)
+  }
+  return(res.lst)
+}
+bridgeAggregation.maxmax <- function(G,res,bridges,bridges.agr){
+  k <- 0
+  res.lst <- list()
+  change.flag <- 1
+  while(change.flag != 0){
+    gc()
+    k <- k + 1
+    cat("Aggregation number ",k,"\n")
+    change.flag <- 0
+    visited <- 0
+    coeff.agr <- bridgeCoeff(G,res,bridges.agr,bridges.agr)
+    G.infoSpread <- infoS(coeff.agr)
+    while(sum(visited != 0) < nrow(coeff.agr)){
+      # choice of bridge with lowest value of InfoSpread
+      if(sum(visited) != 0){
+        visited.ind <- which(coeff.agr[,1] %in% visited[which(visited != 0)])
+        if(length(coeff.agr[-visited.ind,]) == 4){
+          bridge.low <- coeff.agr[-visited.ind,]
+        }else{
+          min.infos <- which.max(G.infoSpread[-visited.ind])
+          bridge.low <- coeff.agr[-visited.ind,][min.infos,]  
+        }
+        
+      }else{
+        bridge.low <- coeff.agr[which.max(G.infoSpread),]
+      }
+      # adding chosen bridge to set of visted ones
+      visited <- c(visited,bridge.low[1])
+      cat("Number of visited bridge candidates: ", length(visited)-1," from ", nrow(coeff.agr),"\n")
+      # finding neighbourhoods of bridge
+      G.list <- graph.neighborhood(G,1,bridges.agr[2,which(bridges.agr[1,] %in% bridge.low[1])])
+      G.list.v <- unique(unlist(lapply(G.list, function(x){
+        as.numeric(V(x)$name)
+      })))
+      # znajde sasiadujace mosty do potencjalnej agregacji
+      bridges.agr.neigh <- bridges.agr[,which(bridges.agr[1,] %in% unique(bridges.agr[1,which(bridges.agr[2,] %in% G.list.v)]))]
+      bridges.agr.neigh <- bridges.agr.neigh[,-which(bridges.agr.neigh[1,] == bridge.low[1])]
+      # unikalne mosty z sasiedztwa
+      uni.b.agr.neigh <- unique(bridges.agr.neigh[1,])
+      b.agr.neigh.len <- length(uni.b.agr.neigh)
+      flag <- 0
+      # aggregation of first bridge from neighbourhood which will increase value of InfoSpread
+      while(flag == 0 & length(uni.b.agr.neigh) > 0){
+        min.neigh.bridge <- uni.b.agr.neigh[which.max(G.infoSpread[which(coeff.agr %in% uni.b.agr.neigh)])]
+        
+        res.temp <- res
+        res.temp[which(res == min.neigh.bridge)] <- bridge.low[1]
+        bridge.temp <- bridges.agr
+        bridge.temp[1,which(bridges.agr[1,] == min.neigh.bridge)] <- bridge.low[1]
+        
+        ############################
+        # sprawdze czy zagregowany most jest caly czas rzadki
+        G.temp <- induced.subgraph(G,which(res.temp == bridge.low[1]))
+        
+        if((sum(degree(G,which(res.temp == bridge.low[1])))- sum(degree(G.temp))) >= sum(degree(G.temp))){
+          # wierzcholki mostu do aktualizacji
+          bridge.temp.new <- bridge.temp[,which(bridge.temp[1,] == bridge.low[1])]
+          # przeliczam statystyki tylko dla tej jednej agregacji
+          coeff.temp <- bridgeCoeffSingle(G,res.temp, bridge.temp, bridge.temp.new)
+          coeff.temp.val <- 3*prod(coeff.temp[1,-1])/sum(coeff.temp[1,-1])
+          # sprawdzam czy wartosc infospread sie poprawia
+          if(coeff.temp.val  > infoS(coeff.agr)[which(coeff.agr[,1] == bridge.low[1])]){
+            res[which(res == min.neigh.bridge )] <- bridge.low[1]
+            bridges.agr[1,which(bridges.agr[1,] == min.neigh.bridge )] <- bridge.low[1]
+            flag <- 1
+            change.flag <- 1
+          }
+        }
+        uni.b.agr.neigh <- uni.b.agr.neigh[-which(uni.b.agr.neigh == min.neigh.bridge)]
+      }
+    }
+    res.lst[[k]] <- list(res,bridges.agr)
+  }
+  return(res.lst)
+}
+bridgeAggregation.minmin <- function(G,res,bridges,bridges.agr){
+  k <- 0
+  res.lst <- list()
+  change.flag <- 1
+  while(change.flag != 0){
+    gc()
+    k <- k + 1
+    cat("Aggregation number ",k,"\n")
+    change.flag <- 0
+    visited <- 0
+    coeff.agr <- bridgeCoeff(G,res,bridges.agr,bridges.agr)
+    G.infoSpread <- infoS(coeff.agr)
+    while(sum(visited != 0) < nrow(coeff.agr)){
+      # choice of bridge with lowest value of InfoSpread
+      if(sum(visited) != 0){
+        visited.ind <- which(coeff.agr[,1] %in% visited[which(visited != 0)])
+        if(length(coeff.agr[-visited.ind,]) == 4){
+          bridge.low <- coeff.agr[-visited.ind,]
+        }else{
+          min.infos <- which.min(G.infoSpread[-visited.ind])
+          bridge.low <- coeff.agr[-visited.ind,][min.infos,]  
+        }
+        
+      }else{
+        bridge.low <- coeff.agr[which.min(G.infoSpread),]
+      }
+      # adding chosen bridge to set of visted ones
+      visited <- c(visited,bridge.low[1])
+      cat("Number of visited bridge candidates: ", length(visited)-1," from ", nrow(coeff.agr),"\n")
+      # finding neighbourhoods of bridge
+      G.list <- graph.neighborhood(G,1,bridges.agr[2,which(bridges.agr[1,] %in% bridge.low[1])])
+      G.list.v <- unique(unlist(lapply(G.list, function(x){
+        as.numeric(V(x)$name)
+      })))
+      # znajde sasiadujace mosty do potencjalnej agregacji
+      bridges.agr.neigh <- bridges.agr[,which(bridges.agr[1,] %in% unique(bridges.agr[1,which(bridges.agr[2,] %in% G.list.v)]))]
+      bridges.agr.neigh <- bridges.agr.neigh[,-which(bridges.agr.neigh[1,] == bridge.low[1])]
+      # unikalne mosty z sasiedztwa
+      uni.b.agr.neigh <- unique(bridges.agr.neigh[1,])
+      b.agr.neigh.len <- length(uni.b.agr.neigh)
+      flag <- 0
+      # aggregation of first bridge from neighbourhood which will increase value of InfoSpread
+      while(flag == 0 & length(uni.b.agr.neigh) > 0){
+        min.neigh.bridge <- uni.b.agr.neigh[which.min(G.infoSpread[which(coeff.agr %in% uni.b.agr.neigh)])]
+        
+        res.temp <- res
+        res.temp[which(res == min.neigh.bridge)] <- bridge.low[1]
+        bridge.temp <- bridges.agr
+        bridge.temp[1,which(bridges.agr[1,] == min.neigh.bridge)] <- bridge.low[1]
+        
+        ############################
+        # sprawdze czy zagregowany most jest caly czas rzadki
+        G.temp <- induced.subgraph(G,which(res.temp == bridge.low[1]))
+        
+        if((sum(degree(G,which(res.temp == bridge.low[1])))- sum(degree(G.temp))) >= sum(degree(G.temp))){
+          # wierzcholki mostu do aktualizacji
+          bridge.temp.new <- bridge.temp[,which(bridge.temp[1,] == bridge.low[1])]
+          # przeliczam statystyki tylko dla tej jednej agregacji
+          coeff.temp <- bridgeCoeffSingle(G,res.temp, bridge.temp, bridge.temp.new)
+          coeff.temp.val <- 3*prod(coeff.temp[1,-1])/sum(coeff.temp[1,-1])
+          # sprawdzam czy wartosc infospread sie poprawia
+          if(coeff.temp.val  > infoS(coeff.agr)[which(coeff.agr[,1] == bridge.low[1])]){
+            res[which(res == min.neigh.bridge )] <- bridge.low[1]
+            bridges.agr[1,which(bridges.agr[1,] == min.neigh.bridge )] <- bridge.low[1]
+            flag <- 1
+            change.flag <- 1
+          }
+        }
+        uni.b.agr.neigh <- uni.b.agr.neigh[-which(uni.b.agr.neigh == min.neigh.bridge)]
+      }
+    }
+    res.lst[[k]] <- list(res,bridges.agr)
+  }
+  return(res.lst)
+}
+
+
+
+
+
+
+
+
+
+

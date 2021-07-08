@@ -1,0 +1,20 @@
+# method print.explain_env
+print.EcEnv <- function(x){
+  x <- sort(unique(unlist(lapply(x@ec_names,"unlist"))))
+  cat(paste0(seq(length(x)),": ",x), sep = "\n")
+  return(invisible(NULL))
+}
+# method summary.explain_env
+# summary.EcEnv <- function(x){
+#   x <- sort(unique(unlist(lapply(x@ec_names,"unlist"))))
+#   cat(paste0(seq(length(x)),": ",x), sep = "\n")
+#   return(invisible(NULL))
+# }
+
+# method unlist.explain_env
+unlist.EcEnv <- function(x, recursive = T, use.names = T){
+  unlist(x@ec_names, recursive = recursive, use.names = use.names)
+}
+
+
+

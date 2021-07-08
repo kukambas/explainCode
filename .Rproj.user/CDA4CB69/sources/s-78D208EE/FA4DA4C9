@@ -1,0 +1,26 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1586814603322.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "FA4DA4C9",
+    "lastKnownWriteTime" : 1589840284,
+    "last_content_update" : 1589840284167,
+    "path" : "D:/repos/explainCode/ec_constructors.R",
+    "project_path" : "ec_constructors.R",
+    "properties" : {
+        "cursorPosition" : "1,159",
+        "scrollLine" : "0",
+        "tempName" : "Untitled1"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

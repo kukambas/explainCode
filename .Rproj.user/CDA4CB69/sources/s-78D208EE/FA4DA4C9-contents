@@ -1,0 +1,8 @@
+# ec_function constructor
+ec_function <- function(args = list(), body = character(), source = character(), range = numeric(), evals = list(), parents = character(), children = character()){
+  new('EcFunction', args = args, body = body, source = source, range = range, evals = evals, parents = parents, children = children)
+}
+# ec_env constructor
+ec_env <- function(ec_names = list()){
+  new('EcEnv',ec_names = ec_names)
+}
